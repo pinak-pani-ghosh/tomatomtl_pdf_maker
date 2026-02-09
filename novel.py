@@ -111,6 +111,7 @@ class ScraperApp:
         text = text.replace('\u2018', "'").replace('\u2019', "'")
         text = text.replace('\u2026', '...')
         text = text.replace('\xa0', ' ').replace('&nbsp;', ' ')
+        text = text.replace("\n", " ")
         return text.encode('latin-1', 'replace').decode('latin-1').strip()
 
     def toggle_pause(self):
