@@ -16,7 +16,7 @@ class ScraperApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Unicode-Safe Story Scraper")
-        self.root.geometry("800x850") 
+        self.root.geometry("800x800") # Increased height slightly
 
         # Data Storage
         self.everything = {}
@@ -26,10 +26,13 @@ class ScraperApp:
         self.pause_condition = threading.Event()
         self.pause_condition.set()
         
+        # Variable for the save path
         self.save_path_var = tk.StringVar()
-        self.save_path_var.set(os.getcwd()) 
+        self.save_path_var.set(os.getcwd()) # Default to current folder
 
         # --- UI Setup ---
+
+        # 1. URLs
         tk.Label(root, text="Story Metadata URL:", font=('Arial', 10, 'bold')).pack(pady=5)
         self.story_url_entry = tk.Entry(root, width=90)
         self.story_url_entry.pack(pady=2)
@@ -38,14 +41,19 @@ class ScraperApp:
         self.chapter_url_entry = tk.Entry(root, width=90)
         self.chapter_url_entry.pack(pady=2)
 
+        # 2. Save Location (NEW)
         tk.Label(root, text="Save Folder Location:", font=('Arial', 10, 'bold')).pack(pady=5)
+        
         path_frame = tk.Frame(root)
         path_frame.pack(pady=2)
+        
         self.path_entry = tk.Entry(path_frame, textvariable=self.save_path_var, width=75)
         self.path_entry.pack(side=tk.LEFT, padx=5)
+        
         self.browse_btn = tk.Button(path_frame, text="Browse Folder", command=self.browse_folder, bg="#95a5a6", fg="white")
         self.browse_btn.pack(side=tk.LEFT)
 
+        # 3. Action Buttons
         btn_frame = tk.Frame(root)
         btn_frame.pack(pady=15)
 
@@ -61,57 +69,39 @@ class ScraperApp:
                                  bg="#e74c3c", fg="white", font=('Arial', 12, 'bold'), height=2, width=12)
         self.pdf_btn.grid(row=0, column=2, padx=5)
 
-        self.log_box = tk.Text(root, height=22, width=95, state='disabled', bg="#1e1e1e", fg="#ecf0f1", wrap='word')
+        # 4. Log Box
+        self.log_box = tk.Text(root, height=30, width=95, state='disabled', bg="#1e1e1e", fg="#ecf0f1", wrap='word')
         self.log_box.pack(pady=10, padx=10)
 
     def browse_folder(self):
+        """Open dialog to select a folder"""
         folder_selected = filedialog.askdirectory()
         if folder_selected:
             self.save_path_var.set(folder_selected)
 
-    def log(self, message, is_header=False, replace_last_line=False):
-        """Thread-safe logging with ability to update the last line (for timer)"""
+    def log(self, message, is_header=False):
         self.log_box.config(state='normal')
-        
-        if replace_last_line:
-            # Delete the last line before writing the new one (simulate timer update)
-            self.log_box.delete("end-2l", "end-1l") 
-            
         if is_header:
             self.log_box.insert(tk.END, f"\n{'=' * 60}\n{message.upper()}\n{'=' * 60}\n")
         else:
-            timestamp = time.strftime('%H:%M:%S')
-            self.log_box.insert(tk.END, f"[{timestamp}] {message}\n")
-            
+            self.log_box.insert(tk.END, f"[{time.strftime('%H:%M:%S')}] {message}\n")
         self.log_box.see(tk.END)
         self.log_box.config(state='disabled')
 
-    def smart_sleep(self, seconds):
-        """Visual countdown timer in the log box"""
-        for i in range(seconds, 0, -1):
-            # Check pause state inside the loop so we don't freeze while counting down
-            self.pause_condition.wait()
-            
-            # Update log with countdown (replace_last_line=True for numbers > start)
-            msg = f"Waiting... {i} seconds remaining."
-            if i == seconds:
-                self.log(msg) # First print
-            else:
-                self.log(msg, replace_last_line=True) # Overwrite previous second
-            
-            time.sleep(1)
-            
-        # Clear the timer line when done
-        self.log("Ready! Resuming operations...", replace_last_line=True)
-
     def clean_text(self, text):
-        if not text: return "N/A"
+        """Standardizes text for PDF compatibility"""
+        if not text:
+            return "N/A"
+        
+        # Replace common unicode characters that crash PDF generation
         text = text.replace('\u2014', '--').replace('\u2013', '-')
         text = text.replace('\u201c', '"').replace('\u201d', '"')
         text = text.replace('\u2018', "'").replace('\u2019', "'")
         text = text.replace('\u2026', '...')
+        text = text.replace('\n', ' ')
         text = text.replace('\xa0', ' ').replace('&nbsp;', ' ')
-        text = text.replace("\n", " ")
+        
+        # Final safety encoding
         return text.encode('latin-1', 'replace').decode('latin-1').strip()
 
     def toggle_pause(self):
@@ -134,35 +124,42 @@ class ScraperApp:
         try:
             pdf = FPDF()
             pdf.set_auto_page_break(auto=True, margin=15)
+            
             first_key = list(self.everything.keys())[0]
 
             for index, (key, value) in enumerate(self.everything.items()):
                 pdf.add_page()
+                
                 safe_key = self.clean_text(key)
                 safe_val = self.clean_text(value)
 
                 if index == 0:
+                    # Title Page
                     pdf.set_font("helvetica", 'B', 24)
-                    pdf.multi_cell(0, 15, txt=safe_key, align='C')
+                    pdf.multi_cell(0, 15, text=safe_key, align='C')
                     pdf.ln(10)
                     pdf.set_font("helvetica", size=12)
-                    pdf.multi_cell(0, 7, txt=safe_val)
+                    pdf.multi_cell(0, 7, text=safe_val)
                 else:
+                    # Chapter Page
                     pdf.set_font("helvetica", 'B', 16)
-                    pdf.cell(0, 10, txt=safe_key, ln=True)
+                    pdf.cell(0, 10, text=safe_key, ln=True)
                     pdf.set_font("helvetica", size=11)
-                    pdf.multi_cell(0, 6, txt=safe_val)
+                    pdf.multi_cell(0, 6, text=safe_val)
 
+            # --- PATH LOGIC START ---
             base_path = self.save_path_var.get()
+            
+            # Clean title for filename/folder name usage
             safe_name = re.sub(r'[\\/*?:"<>|]', "", first_key).strip()
-            story_folder = os.path.join(base_path, safe_name)
+            safe_name = safe_name.replace(' ', '-')
             
-            if not os.path.exists(story_folder):
-                try: os.makedirs(story_folder)
-                except: story_folder = base_path
-            
-            full_path = os.path.join(story_folder, f"{safe_name}.pdf")
+            # Define full file path
+            full_path = os.path.join(base_path, f"{safe_name}.pdf")
+            # --- PATH LOGIC END ---
+
             pdf.output(full_path)
+            
             messagebox.showinfo("Success", f"PDF Saved at:\n{full_path}")
             self.log(f"PDF Generated: {full_path}", is_header=True)
 
@@ -195,9 +192,7 @@ class ScraperApp:
             # --- METADATA ---
             self.log("Scraping Story Metadata...", is_header=True)
             driver.get(story_url)
-            
-            # REPLACED time.sleep(3) WITH SMART TIMER
-            self.smart_sleep(30) 
+            time.sleep(15)
 
             try: title = driver.find_element(By.ID, "book_name").text
             except: title = "Untitled Story"
@@ -206,8 +201,7 @@ class ScraperApp:
             except: description = "No description."
 
             self.log(f"TITLE: {title}")
-            self.log(f"DEACRIPTION: {description}")
-            # self.everything[title] = description
+            self.everything[title] = description
 
             # --- CHAPTERS ---
             self.log("Starting Chapter Scrape...", is_header=True)
@@ -216,16 +210,16 @@ class ScraperApp:
             while current_url:
                 self.pause_condition.wait()
                 driver.get(current_url)
-                
-                time.sleep(5) 
+                time.sleep(3)
 
                 try:
                     ch_title = driver.find_element(By.ID, 'chapter_title').text
                     ch_body = driver.find_element(By.ID, 'chapter_content').text
-                    # self.everything[ch_title] = ch_body
+                    self.everything[ch_title] = ch_body
 
-                    self.log(f"Scraped: {ch_title}")
-                    self.log(f"Body: {ch_body[:200]}...\n\n{'-' * 60}\n")
+                    self.log(f"Scraped: {ch_title}\n")
+                    self.log(f"Scraped: {ch_body[:200]}\n\n{'-' * 60}")
+
                     
                     next_link = driver.find_element(By.ID, "next-chap")
                     if 'disabled' not in next_link.get_attribute("class"):
